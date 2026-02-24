@@ -38,36 +38,6 @@ struct InfiniteCarouselBehavior: @MainActor ScrollTargetBehavior {
     }
 }
 
-//struct InfiniteCarouselBehavior: @MainActor ScrollTargetBehavior {
-//    let stepWidth: CGFloat
-//    let count: Int              // 실제 아이템 count
-//    let cardCount: Int          // tripledItems.count = 3*count
-//    let snapTarget: SnapTarget
-//    
-//    @MainActor
-//    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
-//        guard stepWidth > 0, count > 0 else { return }
-//
-//        // 1) raw page
-//        let raw = target.rect.minX / stepWidth
-//        var page = Int(raw.rounded())
-//
-//        // 2) 전체 범위 clamp (필요 최소)
-//        page = min(max(page, 0), cardCount - 1)
-//
-//        // 3) middle 섹션(count ..< 2*count)으로 정규화
-//        if page < count {
-//            page += count
-//        } else if page >= 2 * count {
-//            page -= count
-//        }
-//
-//        // 4) 스냅 확정
-//        target.rect.origin.x = Double(page) * stepWidth
-//        snapTarget.setPage(page)
-//    }
-//}
-
 private extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self {
         min(max(self, range.lowerBound), range.upperBound)

@@ -111,11 +111,8 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
                 // Read the page that updateTarget wrote synchronously.
                 // Spring fires before any deceleration frame is rendered.
                 let page = snapTarget.page
-//                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
                     displayIndex = page
                     selectedIndex = page % count
-//                    scrollPosition.scrollTo(x: CGFloat(page) * stepWidth)
-//                }
             case .idle:
                 loopbackIfNeeded()
             default:
