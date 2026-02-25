@@ -2,47 +2,61 @@
 //  ScrollPhaseBackport.swift
 //  InfiniteCarouselView
 //
-//  iOS 17 polyfill for onScrollPhaseChange.
-//  Observes UIScrollView.isDragging / isDecelerating via KVO to detect scroll phases.
-//  Not applicable to macOS (uses NSScrollView internally).
+//  iOS 17 backport for scroll phase detection.
+//  Mirrors the iOS 18 onScrollPhaseChange API using UIScrollView KVO.
+//
+//  Phase transitions detected via isDragging / isDecelerating KVO.
+//  MainActor.assumeIsolated is used for synchronous capture — avoids the
+//  async-Task race where intermediate phases are missed.
 //
 
 #if canImport(UIKit)
 import UIKit
 import SwiftUI
 
+// MARK: - Phase Enum
+
+/// Mirrors SwiftUI's ScrollPhase (iOS 18) for use on iOS 17.
+enum ScrollPhaseBackport: Equatable, Hashable {
+    case idle
+    case dragging
+    case decelerating
+}
+
 // MARK: - KVO Observer
 
-/// Observes a UIScrollView's drag/decelerate state and fires callbacks on the main actor.
+/// Observes a UIScrollView's isDragging / isDecelerating properties via KVO
+/// and publishes phase transitions on the main actor.
 @MainActor
 final class ScrollPhaseKVOObserver: ObservableObject {
 
-    /// Fired when scrolling becomes active (dragging or decelerating starts).
-    var onBecomeActive: (() -> Void)?
+    /// Current scroll phase. Published so SwiftUI views can react with onChange(of:).
+    @Published private(set) var phase: ScrollPhaseBackport = .idle
 
-    /// Fired when scrolling fully stops. Provides the final contentOffset.x
-    /// so the caller can compute the snapped page without relying on snapTarget timing.
-    var onBecomeIdle: ((CGFloat) -> Void)?
+    /// The contentOffset.x captured at the moment the most recent phase transition fired.
+    /// Use this in an onChange(of: observer.phase) handler to get the offset
+    /// without an additional UIScrollView lookup.
+    private(set) var lastOffsetX: CGFloat = 0
 
     private var observations: [NSKeyValueObservation] = []
     private weak var scrollView: UIScrollView?
-    private var lastWasActive: Bool?
+
+    // MARK: Attach / Detach
 
     func attach(to sv: UIScrollView) {
         guard self.scrollView !== sv else { return }
         self.scrollView = sv
 
+        // Use MainActor.assumeIsolated so KVO fires synchronously on the main actor.
+        // UIKit guarantees isDragging / isDecelerating KVO fires on the main thread,
+        // so this assertion is always valid.
         let obs1 = sv.observe(\.isDragging, options: [.new]) { [weak self, weak sv] _, _ in
-            Task { @MainActor [weak self, weak sv] in
-                guard let sv else { return }
-                self?.reportPhase(from: sv)
-            }
+            guard let sv else { return }
+            MainActor.assumeIsolated { self?.reportPhase(from: sv) }
         }
         let obs2 = sv.observe(\.isDecelerating, options: [.new]) { [weak self, weak sv] _, _ in
-            Task { @MainActor [weak self, weak sv] in
-                guard let sv else { return }
-                self?.reportPhase(from: sv)
-            }
+            guard let sv else { return }
+            MainActor.assumeIsolated { self?.reportPhase(from: sv) }
         }
         observations = [obs1, obs2]
     }
@@ -52,16 +66,21 @@ final class ScrollPhaseKVOObserver: ObservableObject {
         scrollView = nil
     }
 
-    private func reportPhase(from sv: UIScrollView) {
-        let isActive = sv.isDragging || sv.isDecelerating
-        guard isActive != lastWasActive else { return }
-        lastWasActive = isActive
+    // MARK: Private
 
-        if isActive {
-            onBecomeActive?()
+    private func reportPhase(from sv: UIScrollView) {
+        let newPhase: ScrollPhaseBackport
+        if sv.isDragging {
+            newPhase = .dragging
+        } else if sv.isDecelerating {
+            newPhase = .decelerating
         } else {
-            onBecomeIdle?(sv.contentOffset.x)
+            newPhase = .idle
         }
+
+        guard newPhase != phase else { return }
+        lastOffsetX = sv.contentOffset.x
+        phase = newPhase
     }
 }
 
@@ -108,6 +127,33 @@ struct ScrollPhaseObserverView: UIViewRepresentable {
                 view = v.superview
             }
         }
+    }
+}
+
+// MARK: - View Modifier (onScrollPhaseBackportChange)
+
+/// Mirrors `View.onScrollPhaseChange` (iOS 18) for iOS 17.
+/// Action parameters: (oldPhase, newPhase, contentOffsetX)
+private struct ScrollPhaseBackportChangeModifier: ViewModifier {
+    @StateObject private var observer = ScrollPhaseKVOObserver()
+    let action: (ScrollPhaseBackport, ScrollPhaseBackport, CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .background(ScrollPhaseObserverView(observer: observer))
+            .onChange(of: observer.phase) { old, new in
+                action(old, new, observer.lastOffsetX)
+            }
+    }
+}
+
+extension View {
+    /// Calls `action` whenever the scroll phase transitions, providing the old phase,
+    /// new phase, and the contentOffset.x captured at the moment of transition.
+    func onScrollPhaseBackportChange(
+        _ action: @escaping (ScrollPhaseBackport, ScrollPhaseBackport, CGFloat) -> Void
+    ) -> some View {
+        modifier(ScrollPhaseBackportChangeModifier(action: action))
     }
 }
 
