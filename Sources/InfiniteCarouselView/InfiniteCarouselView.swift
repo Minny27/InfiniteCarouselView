@@ -42,6 +42,11 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
         self.content = content
         // Start at index `count` — the beginning of the real section
         self._displayIndex = State(initialValue: items.count)
+        // Pre-initialize currentIndex on the SnapTarget so updateTarget has the
+        // correct value before the first render (avoids clamping on early scrolls).
+        let st = SnapTarget()
+        st.setCurrentIndex(items.count)
+        self._snapTarget = State(initialValue: st)
     }
 
     // MARK: Private State
@@ -54,7 +59,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     /// Tracks scroll phase — used as the task ID to reset the auto-scroll countdown
     @State private var scrollPhase: ScrollPhase = .idle
     /// Shared reference for synchronous communication from updateTarget to onScrollPhaseChange
-    @State private var snapTarget = SnapTarget()
+    @State private var snapTarget: SnapTarget
 
     // MARK: Computed
 
@@ -100,7 +105,6 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             InfiniteCarouselBehavior(
                 stepWidth: stepWidth,
                 cardCount: tripledItems.count,
-                currentIndex: displayIndex,
                 snapTarget: snapTarget
             )
         )
@@ -108,11 +112,10 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             scrollPhase = newPhase
             switch newPhase {
             case .decelerating:
-                // Read the page that updateTarget wrote synchronously.
-                // Spring fires before any deceleration frame is rendered.
                 let page = snapTarget.page
-                    displayIndex = page
-                    selectedIndex = page % count
+                displayIndex = page
+                selectedIndex = page % count
+                snapTarget.setCurrentIndex(page)
             case .idle:
                 loopbackIfNeeded()
             default:
@@ -159,6 +162,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     /// Animates to the given index in the tripled array with a spring
     private func select(_ index: Int) {
         let clamped = max(0, min(tripledItems.count - 1, index))
+        snapTarget.setCurrentIndex(clamped)
         withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
             displayIndex = clamped
             selectedIndex = clamped % count
@@ -182,12 +186,14 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             let newIndex = displayIndex + count
             displayIndex = newIndex
             selectedIndex = newIndex % count
+            snapTarget.setCurrentIndex(newIndex)
             scrollPosition.scrollTo(x: CGFloat(newIndex) * stepWidth)
         } else if displayIndex >= 2 * count {
             // back clone → real section
             let newIndex = displayIndex - count
             displayIndex = newIndex
             selectedIndex = newIndex % count
+            snapTarget.setCurrentIndex(newIndex)
             scrollPosition.scrollTo(x: CGFloat(newIndex) * stepWidth)
         }
     }
