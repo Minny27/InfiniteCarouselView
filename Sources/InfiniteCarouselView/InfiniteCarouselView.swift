@@ -58,9 +58,6 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     @State private var containerWidth: CGFloat = 0
     /// Tracks scroll phase — used as the task ID to reset the auto-scroll countdown
     @State private var scrollPhase: ScrollPhase = .idle
-    /// Incremented after every loopback so the auto-scroll task restarts even when
-    /// scrollPhase stays .idle (programmatic scrollTo doesn't always change the phase).
-    @State private var loopbackToken: Int = 0
     /// Shared reference for synchronous communication from updateTarget to onScrollPhaseChange
     @State private var snapTarget: SnapTarget
 
@@ -148,9 +145,9 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             scrollPosition.scrollTo(x: CGFloat(count) * stepWidth)
         }
         // Auto-scroll timer.
-        // Restarts whenever scrollPhase changes (user interaction) OR loopbackToken
-        // changes (programmatic loopback that doesn't always trigger a phase transition).
-        .task(id: AutoScrollID(phase: scrollPhase, token: loopbackToken)) {
+        // .task(id: scrollPhase) cancels and restarts whenever the phase changes,
+        // effectively resetting the countdown after each user interaction.
+        .task(id: scrollPhase) {
             guard let interval = autoScrollInterval,
                   scrollPhase == .idle,
                   isReady else { return }
@@ -174,24 +171,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     }
 
     private func selectNext() {
-        let next = displayIndex + 1
-        guard next < 2 * count else {
-            // About to enter the back-clone region.
-            // Instead: silently jump to the front-clone equivalent of the current position
-            // (same visual — both show the same last card), then animate forward into the
-            // real section. This avoids visiting the back-clone entirely and eliminates the
-            // back-clone → loopback flash.
-            let frontEquivalent = displayIndex - count  // same card, front-clone copy
-            displayIndex = frontEquivalent
-            snapTarget.setCurrentIndex(frontEquivalent)
-            scrollPosition.scrollTo(x: CGFloat(frontEquivalent) * stepWidth)
-            // Defer the animation so SwiftUI processes the silent repositioning first.
-            Task { @MainActor in
-                select(frontEquivalent + 1)
-            }
-            return
-        }
-        select(next)
+        select(displayIndex + 1)
     }
 
     // MARK: Infinite Loop
@@ -208,7 +188,6 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             selectedIndex = newIndex % count
             snapTarget.setCurrentIndex(newIndex)
             scrollPosition.scrollTo(x: CGFloat(newIndex) * stepWidth)
-            loopbackToken &+= 1
         } else if displayIndex >= 2 * count {
             // back clone → real section
             let newIndex = displayIndex - count
@@ -216,19 +195,11 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             selectedIndex = newIndex % count
             snapTarget.setCurrentIndex(newIndex)
             scrollPosition.scrollTo(x: CGFloat(newIndex) * stepWidth)
-            loopbackToken &+= 1
         }
     }
 }
 
 // MARK: - Internal Types
-
-/// Composite task ID so the auto-scroll task restarts on either a scroll-phase change
-/// (user interaction) or a loopback (programmatic scrollTo that may not change phase).
-private struct AutoScrollID: Equatable {
-    let phase: ScrollPhase
-    let token: Int
-}
 
 struct TripleItem<T: Identifiable>: Identifiable {
     let id: Int
