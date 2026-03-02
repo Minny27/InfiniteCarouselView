@@ -4,7 +4,7 @@ A SwiftUI infinite paging carousel built with the tripling strategy.
 Supports auto-scroll, tap-to-page, and swipe-with-spring — all in a single generic view.
 
 <p align="center">
-  <img src="Documentation/demo.gif" width="300" alt="InfiniteCarouselView Demo">
+  <img src="Documentation/infinite_carousel.gif" width="300" alt="InfiniteCarouselView Demo">
 </p>
 
 ---
