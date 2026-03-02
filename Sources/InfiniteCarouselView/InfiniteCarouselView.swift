@@ -98,7 +98,6 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
                                 Color.clear.preference(key: ItemSizeKey.self, value: g.size)
                             }
                         )
-                        .onTapGesture { select(triple.id) }
                 }
             }
             .padding(.horizontal, horizontalPadding)
@@ -155,7 +154,9 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
                   scrollPhase == .idle,
                   isReady else { return }
             try? await Task.sleep(for: .seconds(interval))
-            guard !Task.isCancelled else { return }
+            // Double-check idle after sleep: a tap or swipe may have arrived
+            // in the window between waking up and reaching this line.
+            guard !Task.isCancelled, scrollPhase == .idle else { return }
             selectNext()
         }
     }
