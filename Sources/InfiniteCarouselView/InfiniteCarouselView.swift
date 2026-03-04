@@ -172,7 +172,24 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     }
 
     private func selectNext() {
-        select(displayIndex + 1)
+        guard count > 0 else { return }
+        let next = displayIndex + 1
+        guard next < 2 * count else {
+            // About to enter the back-clone region.
+            // Silently jump to the front-clone equivalent of the current position
+            // (same visual — both show the same last card), then animate forward
+            // into the real section.  This avoids the back-clone → loopback flash.
+            let frontEquiv = displayIndex - count
+            displayIndex = frontEquiv
+            snapTarget.setCurrentIndex(frontEquiv)
+            scrollPosition.scrollTo(x: CGFloat(frontEquiv) * stepWidth)
+            // Defer the animation so SwiftUI processes the silent jump first.
+            Task { @MainActor in
+                select(frontEquiv + 1)
+            }
+            return
+        }
+        select(next)
     }
 
     // MARK: Infinite Loop
