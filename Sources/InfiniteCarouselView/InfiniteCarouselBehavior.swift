@@ -18,7 +18,11 @@ final class SnapTarget {
     private(set) var currentIndex: Int = 0
 
     func setPage(_ newValue: Int) { page = newValue }
-    func setCurrentIndex(_ newValue: Int) { currentIndex = newValue }
+
+    func sync(to index: Int) {
+        page = index
+        currentIndex = index
+    }
 }
 
 struct InfiniteCarouselBehavior: @MainActor ScrollTargetBehavior {
