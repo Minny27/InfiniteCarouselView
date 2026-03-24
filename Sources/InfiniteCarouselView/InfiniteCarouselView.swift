@@ -7,7 +7,6 @@
 //  - On idle, if position is in a clone region, silently jump back to the real region
 //  - Item size is measured automatically from the content view via PreferenceKey
 //  - autoScrollInterval: when set, advances to the next card every N seconds while idle
-//  - Tap: tapping an adjacent card pages to it
 //  - Swipe: snap target is written synchronously in updateTarget → read in .decelerating
 //           spring fires before any deceleration frame is rendered
 //
@@ -40,12 +39,13 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
         self.autoScrollInterval = autoScrollInterval
         self._selectedIndex = selectedIndex
         self.content = content
-        // Start at index `count` — the beginning of the real section
-        self._displayIndex = State(initialValue: items.count)
+        let initialRealIndex = Self.clampRealIndex(selectedIndex.wrappedValue, count: items.count)
+        let initialDisplayIndex = items.isEmpty ? 0 : items.count + initialRealIndex
+        self._displayIndex = State(initialValue: initialDisplayIndex)
         // Pre-initialize currentIndex on the SnapTarget so updateTarget has the
         // correct value before the first render (avoids clamping on early scrolls).
         let st = SnapTarget()
-        st.setCurrentIndex(items.count)
+        st.sync(to: initialDisplayIndex)
         self._snapTarget = State(initialValue: st)
     }
 
@@ -66,6 +66,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     private var count: Int { items.count }
     private var stepWidth: CGFloat { itemSize.width + spacing }
     private var isReady: Bool { itemSize.width > 0 && containerWidth > 0 }
+    private var currentRealIndex: Int { Self.clampRealIndex(displayIndex % max(count, 1), count: count) }
 
     /// Horizontal padding that centers the first and last cards on screen
     private var horizontalPadding: CGFloat {
@@ -111,10 +112,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             scrollPhase = newPhase
             switch newPhase {
             case .decelerating:
-                let page = snapTarget.page
-                displayIndex = page
-                selectedIndex = page % count
-                snapTarget.setCurrentIndex(page)
+                settleScrollTarget()
             case .idle:
                 loopbackIfNeeded()
             default:
@@ -141,7 +139,10 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
         // Scroll to the real section start once both sizes are available
         .onChange(of: isReady) { _, ready in
             guard ready else { return }
-            scrollPosition.scrollTo(x: CGFloat(count) * stepWidth)
+            scrollTo(index: displayIndex, animated: false)
+        }
+        .onChange(of: selectedIndex) { _, newValue in
+            syncExternalSelection(to: newValue)
         }
         // Auto-scroll timer.
         // .task(id: scrollPhase) cancels and restarts whenever the phase changes,
@@ -151,7 +152,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
                   scrollPhase == .idle,
                   isReady else { return }
             try? await Task.sleep(for: .seconds(interval))
-            // Double-check idle after sleep: a tap or swipe may have arrived
+            // Double-check idle after sleep: another interaction may have arrived
             // in the window between waking up and reaching this line.
             guard !Task.isCancelled, scrollPhase == .idle else { return }
             selectNext()
@@ -161,18 +162,23 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
     // MARK: Selection
 
     /// Animates to the given index in the tripled array with a spring
-    private func select(_ index: Int) {
-        let clamped = max(0, min(tripledItems.count - 1, index))
-        snapTarget.setCurrentIndex(clamped)
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
-            displayIndex = clamped
-            selectedIndex = clamped % count
-            scrollPosition.scrollTo(x: CGFloat(clamped) * stepWidth)
+    private func select(_ index: Int, animated: Bool = true) {
+        guard count > 0 else { return }
+        let clamped = clampDisplayIndex(index)
+        syncSelectionState(to: clamped)
+
+        if animated {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                scrollTo(index: clamped, animated: false)
+            }
+        } else {
+            scrollTo(index: clamped, animated: false)
         }
     }
 
     private func selectNext() {
         guard count > 0 else { return }
+        interruptActiveScrollIfNeeded()
         let next = displayIndex + 1
         guard next < 2 * count else {
             // About to enter the back-clone region.
@@ -180,9 +186,7 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             // (same visual — both show the same last card), then animate forward
             // into the real section.  This avoids the back-clone → loopback flash.
             let frontEquiv = displayIndex - count
-            displayIndex = frontEquiv
-            snapTarget.setCurrentIndex(frontEquiv)
-            scrollPosition.scrollTo(x: CGFloat(frontEquiv) * stepWidth)
+            select(frontEquiv, animated: false)
             // Defer the animation so SwiftUI processes the silent jump first.
             Task { @MainActor in
                 select(frontEquiv + 1)
@@ -190,6 +194,11 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
             return
         }
         select(next)
+    }
+
+    private func interruptActiveScrollIfNeeded() {
+        guard scrollPhase != .idle else { return }
+        scrollTo(index: displayIndex, animated: false)
     }
 
     // MARK: Infinite Loop
@@ -201,19 +210,54 @@ public struct InfiniteCarouselView<T: Identifiable, Content: View>: View {
 
         if displayIndex < count {
             // front clone → real section
-            let newIndex = displayIndex + count
-            displayIndex = newIndex
-            selectedIndex = newIndex % count
-            snapTarget.setCurrentIndex(newIndex)
-            scrollPosition.scrollTo(x: CGFloat(newIndex) * stepWidth)
+            select(displayIndex + count, animated: false)
         } else if displayIndex >= 2 * count {
             // back clone → real section
-            let newIndex = displayIndex - count
-            displayIndex = newIndex
-            selectedIndex = newIndex % count
-            snapTarget.setCurrentIndex(newIndex)
-            scrollPosition.scrollTo(x: CGFloat(newIndex) * stepWidth)
+            select(displayIndex - count, animated: false)
         }
+    }
+
+    private func settleScrollTarget() {
+        guard count > 0 else { return }
+        syncSelectionState(to: clampDisplayIndex(snapTarget.page))
+    }
+
+    private func syncExternalSelection(to newValue: Int) {
+        guard isReady, count > 0 else { return }
+        let realIndex = Self.clampRealIndex(newValue, count: count)
+        guard realIndex != currentRealIndex else { return }
+
+        interruptActiveScrollIfNeeded()
+        select(count + realIndex)
+    }
+
+    private func syncSelectionState(to index: Int) {
+        let clamped = clampDisplayIndex(index)
+        displayIndex = clamped
+        selectedIndex = clamped % count
+        snapTarget.sync(to: clamped)
+    }
+
+    private func scrollTo(index: Int, animated: Bool) {
+        guard stepWidth > 0 else { return }
+        let x = CGFloat(index) * stepWidth
+        if animated {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                scrollPosition.scrollTo(x: x)
+            }
+        } else {
+            scrollPosition.scrollTo(x: x)
+        }
+    }
+
+    private func clampDisplayIndex(_ index: Int) -> Int {
+        guard !tripledItems.isEmpty else { return 0 }
+        return max(0, min(tripledItems.count - 1, index))
+    }
+
+    private static func clampRealIndex(_ index: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return max(0, min(count - 1, index))
     }
 }
 

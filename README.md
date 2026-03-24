@@ -1,7 +1,7 @@
 # InfiniteCarouselView
 
 A SwiftUI infinite paging carousel built with the tripling strategy.
-Supports auto-scroll, tap-to-page, and swipe-with-spring — all in a single generic view.
+Supports auto-scroll and swipe-with-spring in a single generic view.
 
 <p align="center">
   <img src="Documentation/infinite_carousel.gif" width="300" alt="InfiniteCarouselView Demo">
@@ -25,7 +25,7 @@ selectedIndex: 0  1  2  3  4    0  1  2  3  4    0  1  2  3  4
 
 **2. Snappy swipe — no deceleration**
 Standard `ScrollTargetBehavior` hands animation control to UIKit, which uses its own deceleration curve.
-`InfiniteCarouselView` intercepts the swipe at the `.decelerating` phase transition — before any deceleration frame is rendered — and replaces it with a spring animation identical to the tap behavior.
+`InfiniteCarouselView` intercepts the swipe at the `.decelerating` phase transition — before any deceleration frame is rendered — and replaces it with a spring animation.
 
 ---
 
@@ -51,7 +51,7 @@ Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Minny27/InfiniteCarouselView.git", from: "1.0.0")
+    .package(url: "https://github.com/Minny27/InfiniteCarouselView.git", from: "1.0.1")
 ]
 ```
 
